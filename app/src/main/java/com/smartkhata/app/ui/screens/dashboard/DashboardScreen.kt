@@ -1,7 +1,7 @@
 package com.smartkhata.app.ui.screens.dashboard
 
+import android.content.Intent
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -12,14 +12,17 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.smartkhata.app.data.model.TransactionType
+import com.smartkhata.app.ui.components.SelectedSummaryBottomDock
 import com.smartkhata.app.ui.components.TransactionItemCard
 import com.smartkhata.app.ui.theme.*
 import com.smartkhata.app.util.Formatters
+import com.smartkhata.app.util.StatementExporter
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -28,12 +31,23 @@ fun DashboardScreen(
     onNavigateToNewEntry: (mode: String) -> Unit,
     onNavigateToContactLedger: (contactId: Long) -> Unit
 ) {
+    val context = LocalContext.current
     val summary by viewModel.dashboardSummary.collectAsState()
     val entries by viewModel.entries.collectAsState()
     val searchQuery by viewModel.searchQuery.collectAsState()
     val activeFilter by viewModel.filter.collectAsState()
+    val selectedIds by viewModel.selectedEntryIds.collectAsState()
+    val isSelectionMode by viewModel.isSelectionMode.collectAsState()
 
     var showFabMenu by remember { mutableStateOf(false) }
+
+    // Selected Items Totals
+    val selectedEntries = remember(entries, selectedIds) {
+        entries.filter { selectedIds.contains(it.id) }
+    }
+    val selectedGave = selectedEntries.filter { it.transactionType == TransactionType.GAVE }.sumOf { it.amount }
+    val selectedGot = selectedEntries.filter { it.transactionType == TransactionType.GOT }.sumOf { it.amount }
+    val selectedNet = selectedGave - selectedGot
 
     Scaffold(
         topBar = {
@@ -41,72 +55,130 @@ fun DashboardScreen(
                 title = {
                     Column {
                         Text(
-                            text = "SmartKhata AI",
+                            text = if (isSelectionMode) "${selectedIds.size} Selected" else "SmartKhata AI",
                             fontWeight = FontWeight.Bold,
                             fontSize = 20.sp,
                             color = SurfaceWhite
                         )
                         Text(
-                            text = "Smart Multilingual Ledger (खाता)",
+                            text = if (isSelectionMode) "Tap items to toggle selection" else "Smart Multilingual Ledger (खाता)",
                             fontSize = 12.sp,
                             color = SurfaceWhite.copy(alpha = 0.8f)
                         )
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = PrimaryBlue
-                )
+                navigationIcon = {
+                    if (isSelectionMode) {
+                        IconButton(onClick = { viewModel.clearSelection() }) {
+                            Icon(Icons.Default.Close, contentDescription = "Clear Selection", tint = SurfaceWhite)
+                        }
+                    }
+                },
+                actions = {
+                    if (isSelectionMode) {
+                        IconButton(onClick = {
+                            if (selectedIds.size == entries.size) viewModel.clearSelection() else viewModel.selectAll()
+                        }) {
+                            Icon(
+                                if (selectedIds.size == entries.size) Icons.Default.Deselect else Icons.Default.SelectAll,
+                                contentDescription = "Select All",
+                                tint = SurfaceWhite
+                            )
+                        }
+                    } else {
+                        // Download filtered report
+                        IconButton(onClick = {
+                            StatementExporter.shareCsvFile(context, "Dashboard_Report", entries)
+                        }) {
+                            Icon(Icons.Default.FileDownload, contentDescription = "Export CSV", tint = SurfaceWhite)
+                        }
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = PrimaryBlue)
             )
         },
+        bottomBar = {
+            if (isSelectionMode && selectedIds.isNotEmpty()) {
+                SelectedSummaryBottomDock(
+                    selectedCount = selectedIds.size,
+                    selectedGave = selectedGave,
+                    selectedGot = selectedGot,
+                    selectedNet = selectedNet,
+                    onExportCsv = {
+                        StatementExporter.shareCsvFile(context, "Selected_Report", selectedEntries)
+                    },
+                    onExportWhatsApp = {
+                        val statement = StatementExporter.generateWhatsAppStatement(
+                            partyName = "Selected Report",
+                            entries = selectedEntries,
+                            filterLabel = "${selectedEntries.size} Selected Items"
+                        )
+                        val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_TEXT, statement)
+                        }
+                        context.startActivity(Intent.createChooser(sendIntent, "Share Selected Report"))
+                    },
+                    onDeleteSelected = {
+                        viewModel.deleteSelectedEntries()
+                    },
+                    onClearSelection = {
+                        viewModel.clearSelection()
+                    }
+                )
+            }
+        },
         floatingActionButton = {
-            Column(
-                horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                if (showFabMenu) {
-                    ExtendedFloatingActionButton(
-                        onClick = {
-                            showFabMenu = false
-                            onNavigateToNewEntry("video")
-                        },
-                        icon = { Icon(Icons.Default.Videocam, contentDescription = null) },
-                        text = { Text("Video Note") },
-                        containerColor = SecondaryTeal,
-                        contentColor = SurfaceWhite
-                    )
-
-                    ExtendedFloatingActionButton(
-                        onClick = {
-                            showFabMenu = false
-                            onNavigateToNewEntry("voice")
-                        },
-                        icon = { Icon(Icons.Default.Mic, contentDescription = null) },
-                        text = { Text("Voice Note (बोलकर)") },
-                        containerColor = PrimaryBlue,
-                        contentColor = SurfaceWhite
-                    )
-
-                    ExtendedFloatingActionButton(
-                        onClick = {
-                            showFabMenu = false
-                            onNavigateToNewEntry("type")
-                        },
-                        icon = { Icon(Icons.Default.Edit, contentDescription = null) },
-                        text = { Text("Type Entry (लिखकर)") },
-                        containerColor = PrimaryBlueDark,
-                        contentColor = SurfaceWhite
-                    )
-                }
-
-                FloatingActionButton(
-                    onClick = { showFabMenu = !showFabMenu },
-                    containerColor = if (showFabMenu) GaveRed else PrimaryBlue,
-                    contentColor = SurfaceWhite
+            if (!isSelectionMode) {
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Icon(
-                        imageVector = if (showFabMenu) Icons.Default.Close else Icons.Default.Add,
-                        contentDescription = "New Entry"
-                    )
+                    if (showFabMenu) {
+                        ExtendedFloatingActionButton(
+                            onClick = {
+                                showFabMenu = false
+                                onNavigateToNewEntry("video")
+                            },
+                            icon = { Icon(Icons.Default.Videocam, contentDescription = null) },
+                            text = { Text("Video Note") },
+                            containerColor = SecondaryTeal,
+                            contentColor = SurfaceWhite
+                        )
+
+                        ExtendedFloatingActionButton(
+                            onClick = {
+                                showFabMenu = false
+                                onNavigateToNewEntry("voice")
+                            },
+                            icon = { Icon(Icons.Default.Mic, contentDescription = null) },
+                            text = { Text("Voice Note (बोलकर)") },
+                            containerColor = PrimaryBlue,
+                            contentColor = SurfaceWhite
+                        )
+
+                        ExtendedFloatingActionButton(
+                            onClick = {
+                                showFabMenu = false
+                                onNavigateToNewEntry("type")
+                            },
+                            icon = { Icon(Icons.Default.Edit, contentDescription = null) },
+                            text = { Text("Type Entry (लिखकर)") },
+                            containerColor = PrimaryBlueDark,
+                            contentColor = SurfaceWhite
+                        )
+                    }
+
+                    FloatingActionButton(
+                        onClick = { showFabMenu = !showFabMenu },
+                        containerColor = if (showFabMenu) GaveRed else PrimaryBlue,
+                        contentColor = SurfaceWhite
+                    ) {
+                        Icon(
+                            imageVector = if (showFabMenu) Icons.Default.Close else Icons.Default.Add,
+                            contentDescription = "New Entry"
+                        )
+                    }
                 }
             }
         }
@@ -159,7 +231,6 @@ fun DashboardScreen(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            // You gave (to collect)
                             Column {
                                 Text(
                                     text = "You'll Get (दिया)",
@@ -174,7 +245,6 @@ fun DashboardScreen(
                                 )
                             }
 
-                            // You got (to pay)
                             Column(horizontalAlignment = Alignment.End) {
                                 Text(
                                     text = "You'll Give (लिया)",
@@ -223,41 +293,63 @@ fun DashboardScreen(
                 )
             }
 
-            // 3. Filter Chips
+            // 3. Filter Chips & Download Report
             item {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    FilterChip(
-                        selected = activeFilter == FilterType.ALL,
-                        onClick = { viewModel.setFilter(FilterType.ALL) },
-                        label = { Text("All Entries") }
-                    )
-                    FilterChip(
-                        selected = activeFilter == FilterType.YOU_GAVE,
-                        onClick = { viewModel.setFilter(FilterType.YOU_GAVE) },
-                        label = { Text("You Gave") },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = GaveRedBg,
-                            selectedLabelColor = GaveRed
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilterChip(
+                            selected = activeFilter == FilterType.ALL,
+                            onClick = { viewModel.setFilter(FilterType.ALL) },
+                            label = { Text("All") }
                         )
-                    )
-                    FilterChip(
-                        selected = activeFilter == FilterType.YOU_GOT,
-                        onClick = { viewModel.setFilter(FilterType.YOU_GOT) },
-                        label = { Text("You Got") },
-                        colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = GotGreenBg,
-                            selectedLabelColor = GotGreen
+                        FilterChip(
+                            selected = activeFilter == FilterType.YOU_GAVE,
+                            onClick = { viewModel.setFilter(FilterType.YOU_GAVE) },
+                            label = { Text("Gave") },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = GaveRedBg,
+                                selectedLabelColor = GaveRed
+                            )
                         )
-                    )
+                        FilterChip(
+                            selected = activeFilter == FilterType.YOU_GOT,
+                            onClick = { viewModel.setFilter(FilterType.YOU_GOT) },
+                            label = { Text("Got") },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = GotGreenBg,
+                                selectedLabelColor = GotGreen
+                            )
+                        )
+                    }
+
+                    // Download Filtered CSV Button
+                    OutlinedButton(
+                        onClick = {
+                            StatementExporter.shareCsvFile(
+                                context,
+                                "SmartKhata_${activeFilter.name}",
+                                entries
+                            )
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Icon(Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Export CSV", fontSize = 12.sp)
+                    }
                 }
             }
 
-            // 4. Section Header
+            // 4. Section Header with Selection toggle
             item {
                 Row(
                     modifier = Modifier
@@ -272,6 +364,14 @@ fun DashboardScreen(
                         fontSize = 16.sp,
                         color = TextPrimary
                     )
+
+                    TextButton(
+                        onClick = {
+                            if (isSelectionMode) viewModel.clearSelection() else viewModel.selectAll()
+                        }
+                    ) {
+                        Text(if (isSelectionMode) "Done" else "Select Items", fontSize = 13.sp)
+                    }
                 }
             }
 
@@ -310,14 +410,17 @@ fun DashboardScreen(
                 items(entries, key = { it.id }) { entry ->
                     TransactionItemCard(
                         entry = entry,
+                        isSelected = selectedIds.contains(entry.id),
+                        isSelectionMode = isSelectionMode,
                         onClick = { onNavigateToContactLedger(entry.contactId) },
+                        onLongClick = { viewModel.toggleSelection(entry.id) },
                         onDelete = { viewModel.deleteEntry(entry) }
                     )
                 }
             }
 
             item {
-                Spacer(modifier = Modifier.height(80.dp))
+                Spacer(modifier = Modifier.height(90.dp))
             }
         }
     }

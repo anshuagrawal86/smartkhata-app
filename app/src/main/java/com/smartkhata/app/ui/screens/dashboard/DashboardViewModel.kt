@@ -24,6 +24,9 @@ class DashboardViewModel(private val repository: LedgerRepository) : ViewModel()
     private val _filter = MutableStateFlow(FilterType.ALL)
     val filter = _filter.asStateFlow()
 
+    val selectedEntryIds = MutableStateFlow<Set<Long>>(emptySet())
+    val isSelectionMode = MutableStateFlow(false)
+
     val dashboardSummary: StateFlow<DashboardSummary> = repository.getDashboardSummaryFlow()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DashboardSummary())
 
@@ -50,15 +53,49 @@ class DashboardViewModel(private val repository: LedgerRepository) : ViewModel()
 
     fun updateSearchQuery(query: String) {
         _searchQuery.value = query
+        clearSelection()
     }
 
     fun setFilter(filterType: FilterType) {
         _filter.value = filterType
+        clearSelection()
+    }
+
+    fun toggleSelection(entryId: Long) {
+        val current = selectedEntryIds.value.toMutableSet()
+        if (current.contains(entryId)) {
+            current.remove(entryId)
+        } else {
+            current.add(entryId)
+        }
+        selectedEntryIds.value = current
+        isSelectionMode.value = current.isNotEmpty()
+    }
+
+    fun selectAll() {
+        selectedEntryIds.value = entries.value.map { it.id }.toSet()
+        isSelectionMode.value = true
+    }
+
+    fun clearSelection() {
+        selectedEntryIds.value = emptySet()
+        isSelectionMode.value = false
     }
 
     fun deleteEntry(entry: EntryEntity) {
         viewModelScope.launch {
             repository.deleteEntry(entry)
+        }
+    }
+
+    fun deleteSelectedEntries() {
+        viewModelScope.launch {
+            val ids = selectedEntryIds.value
+            val entriesToDelete = entries.value.filter { ids.contains(it.id) }
+            for (e in entriesToDelete) {
+                repository.deleteEntry(e)
+            }
+            clearSelection()
         }
     }
 
