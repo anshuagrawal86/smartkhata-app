@@ -17,6 +17,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.smartkhata.app.data.local.entity.EntryEntity
 import com.smartkhata.app.data.model.TransactionType
 import com.smartkhata.app.ui.components.EditEntryDialog
 import com.smartkhata.app.ui.components.SelectedSummaryBottomDock
