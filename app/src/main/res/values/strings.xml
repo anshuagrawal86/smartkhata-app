@@ -1,0 +1,20 @@
+<resources>
+    <string name="app_name">SmartKhata AI</string>
+    <string name="app_tagline">Smart Diary &amp; Ledger (स्मार्ट खाता)</string>
+    <string name="dashboard">Dashboard</string>
+    <string name="entries">Entries</string>
+    <string name="reminders">Reminders</string>
+    <string name="backup_restore">Backup &amp; Restore</string>
+    <string name="you_gave">You Gave</string>
+    <string name="you_got">You Got</string>
+    <string name="net_balance">Net Balance</string>
+    <string name="search_hint">Search by person, amount, notes…</string>
+    <string name="voice_input">Voice Note</string>
+    <string name="typing_input">Type Entry</string>
+    <string name="video_input">Video Note</string>
+    <string name="save_entry">Save Entry</string>
+    <string name="create_backup">Generate Backup</string>
+    <string name="restore_backup">Restore Backup</string>
+    <string name="channel_reminder_name">Ledger Reminders</string>
+    <string name="channel_reminder_desc">Notifications for payment due and diary reminders</string>
+</resources>
