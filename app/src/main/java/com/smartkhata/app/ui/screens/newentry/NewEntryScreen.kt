@@ -3,7 +3,7 @@ package com.smartkhata.app.ui.screens.newentry
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.speech.RecognizerIntent
+import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -39,16 +39,17 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.smartkhata.app.data.model.MediaType
 import com.smartkhata.app.data.model.TransactionType
+import com.smartkhata.app.ui.components.LiveSpeechToTextDialog
 import com.smartkhata.app.ui.theme.*
 import com.smartkhata.app.util.Formatters
-import com.smartkhata.app.util.SpeechRecognizerHelper
 import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NewEntryScreen(
     viewModel: NewEntryViewModel,
-    initialMode: String,
+    initialMode: String = "type",
+    contactId: Long = 0L,
     onNavigateBack: () -> Unit
 ) {
     val context = LocalContext.current
@@ -64,24 +65,29 @@ fun NewEntryScreen(
 
     val isRecordingAudio by viewModel.isRecordingAudio.collectAsState()
     val recordingDuration by viewModel.recordingDurationSeconds.collectAsState()
+    val isPlayingAudio by viewModel.isPlayingAudio.collectAsState()
     val entryDate by viewModel.entryDate.collectAsState()
     val isProcessingAI by viewModel.isProcessingAI.collectAsState()
     val saveSuccess by viewModel.saveSuccess.collectAsState()
     val errorMessage by viewModel.errorMessage.collectAsState()
     val infoMessage by viewModel.infoMessage.collectAsState()
 
+    var showLiveSpeechDialog by remember { mutableStateOf(false) }
     var showVideoChoiceDialog by remember { mutableStateOf(false) }
     var showEntryDatePicker by remember { mutableStateOf(false) }
 
-    // Fallback System Speech Recognition Dialog Intent (works on Google Keyboard / standard dialogs)
-    val speechDialogLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == android.app.Activity.RESULT_OK) {
-            val matches = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
-            val spoken = matches?.firstOrNull() ?: ""
-            if (spoken.isNotBlank()) {
-                viewModel.onSpeechRecognized(spoken)
+    // Initialize contact or trigger initial mode
+    LaunchedEffect(Unit) {
+        viewModel.init(initialMode, contactId)
+        when (initialMode) {
+            "voice" -> {
+                val hasPerm = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+                if (hasPerm) {
+                    showLiveSpeechDialog = true
+                }
+            }
+            "video" -> {
+                showVideoChoiceDialog = true
             }
         }
     }
@@ -97,7 +103,7 @@ fun NewEntryScreen(
         }
     }
 
-    // Video Gallery Picker Launcher (100% reliable on emulators & phones)
+    // Video Gallery / Files Picker Launcher (100% reliable on BlueStacks & real devices)
     val videoGalleryLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri ->
@@ -109,9 +115,9 @@ fun NewEntryScreen(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) {
-            viewModel.startVoiceRecording()
+            showLiveSpeechDialog = true
         } else {
-            Toast.makeText(context, "Microphone permission required for audio recording", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "Microphone permission required for voice input", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -158,7 +164,7 @@ fun NewEntryScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // 1. Smart Text / Free Speech Input Card
+            // 1. Smart Text / Speech-to-Text Input Card
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(16.dp),
@@ -175,42 +181,41 @@ fun NewEntryScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "Smart Note / Voice Input",
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = TextPrimary
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.RecordVoiceOver, contentDescription = null, tint = PrimaryBlue, modifier = Modifier.size(20.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Voice / Note Input",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = TextPrimary
+                            )
+                        }
 
-                        // Quick System Mic Button
+                        // Quick Speech-to-Text Mic Button
                         IconButton(
                             onClick = {
-                                val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                                    putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak in English or Hindi (e.g., 'Ramesh ko 500 diye')")
-                                }
-                                try {
-                                    speechDialogLauncher.launch(intent)
-                                } catch (e: Exception) {
-                                    // Fallback to internal audio recorder
-                                    val hasPerm = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-                                    if (hasPerm) viewModel.startVoiceRecording() else micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                val hasPerm = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+                                if (hasPerm) {
+                                    showLiveSpeechDialog = true
+                                } else {
+                                    micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                                 }
                             }
                         ) {
-                            Icon(Icons.Default.Mic, contentDescription = "Voice Dialog", tint = PrimaryBlue)
+                            Icon(Icons.Default.Mic, contentDescription = "Live Speech-to-Text", tint = PrimaryBlue)
                         }
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    // Text Area for Free Text Note
+                    // Text Area for Note
                     OutlinedTextField(
                         value = inputText,
                         onValueChange = { viewModel.onInputTextChanged(it) },
                         modifier = Modifier.fillMaxWidth(),
                         placeholder = {
-                            Text("Type: 'Ramesh 500' or 'Anita se 1200 mila' or 'Paid milk 60'…", fontSize = 14.sp)
+                            Text("Type or speak: 'Ramesh 500' or 'Anita se 1200 mila' or 'Paid milk 60'…", fontSize = 13.sp)
                         },
                         minLines = 2,
                         maxLines = 4,
@@ -219,7 +224,7 @@ fun NewEntryScreen(
 
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    // Action buttons row: [⚡ Convert Text] [🎙️ Record Voice] [📹 Video Note]
+                    // Action buttons row: [⚡ Convert Text] [🎙️ Speak / Live STT] [📹 Video Note]
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -227,17 +232,63 @@ fun NewEntryScreen(
                         // 1. Explicit Convert Button
                         Button(
                             onClick = { viewModel.parseAndApplyText() },
-                            modifier = Modifier.weight(1.3f),
+                            modifier = Modifier.weight(1.2f),
                             shape = RoundedCornerShape(10.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = PrimaryBlue)
                         ) {
                             Icon(Icons.Default.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Convert Note", fontSize = 13.sp)
+                            Text("Convert Note", fontSize = 12.sp)
                         }
 
-                        // 2. Direct Audio Recorder Button (Emulator-safe)
+                        // 2. Speak Button (Live on-screen STT)
                         OutlinedButton(
+                            onClick = {
+                                val hasPerm = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+                                if (hasPerm) {
+                                    showLiveSpeechDialog = true
+                                } else {
+                                    micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                }
+                            },
+                            modifier = Modifier.weight(1.1f),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = PrimaryBlue)
+                        ) {
+                            Icon(Icons.Default.Mic, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Speak (बोलें)", fontSize = 12.sp)
+                        }
+
+                        // 3. Video Note Button
+                        OutlinedButton(
+                            onClick = { showVideoChoiceDialog = true },
+                            modifier = Modifier.weight(1.0f),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = SecondaryTeal)
+                        ) {
+                            Icon(Icons.Default.Videocam, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(2.dp))
+                            Text("Video", fontSize = 12.sp)
+                        }
+                    }
+
+                    // Direct Audio Recording fallback row
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (isRecordingAudio) "🔴 Recording: ${recordingDuration}s" else "Need to record audio memo?",
+                            fontSize = 12.sp,
+                            fontWeight = if (isRecordingAudio) FontWeight.Bold else FontWeight.Normal,
+                            color = if (isRecordingAudio) GaveRed else TextSecondary
+                        )
+
+                        TextButton(
                             onClick = {
                                 if (isRecordingAudio) {
                                     viewModel.stopVoiceRecording()
@@ -245,100 +296,132 @@ fun NewEntryScreen(
                                     val hasPerm = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
                                     if (hasPerm) viewModel.startVoiceRecording() else micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                                 }
-                            },
-                            modifier = Modifier.weight(1.1f),
-                            shape = RoundedCornerShape(10.dp),
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = if (isRecordingAudio) GaveRed else SecondaryTeal
-                            )
+                            }
                         ) {
                             Icon(
-                                if (isRecordingAudio) Icons.Default.Stop else Icons.Default.Mic,
+                                if (isRecordingAudio) Icons.Default.Stop else Icons.Default.FiberManualRecord,
                                 contentDescription = null,
-                                modifier = Modifier.size(16.dp)
+                                modifier = Modifier.size(14.dp),
+                                tint = GaveRed
                             )
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text(if (isRecordingAudio) "Stop (${recordingDuration}s)" else "Voice Rec", fontSize = 12.sp)
-                        }
-
-                        // 3. Video Button
-                        OutlinedButton(
-                            onClick = { showVideoChoiceDialog = true },
-                            modifier = Modifier.weight(0.9f),
-                            shape = RoundedCornerShape(10.dp)
-                        ) {
-                            Icon(Icons.Default.Videocam, contentDescription = null, modifier = Modifier.size(16.dp), tint = PrimaryBlue)
-                            Spacer(modifier = Modifier.width(2.dp))
-                            Text("Video", fontSize = 12.sp)
+                            Text(if (isRecordingAudio) "Stop Audio Rec" else "Record Voice Audio", fontSize = 12.sp, color = GaveRed)
                         }
                     }
 
-                    // Recording indicator banner
-                    if (isRecordingAudio) {
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(GaveRedBg)
-                                .padding(horizontal = 12.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(10.dp)
-                                    .clip(CircleShape)
-                                    .background(GaveRed)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                "Recording audio: ${recordingDuration}s • Tap 'Stop' to attach",
-                                fontSize = 12.sp,
-                                color = GaveRed,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
-                    }
-
-                    // Media Attachment Badge
-                    mediaFile?.let { file ->
+                    // Attached Media Card: Audio Note
+                    if (mediaType == MediaType.AUDIO && mediaFile != null) {
+                        val file = mediaFile!!
                         Spacer(modifier = Modifier.height(8.dp))
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(PrimaryBlue.copy(alpha = 0.08f))
-                                .padding(horizontal = 10.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = CardDefaults.cardColors(containerColor = SecondaryTeal.copy(alpha = 0.08f))
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    imageVector = if (mediaType == MediaType.AUDIO) Icons.Default.Audiotrack else Icons.Default.VideoFile,
-                                    contentDescription = null,
-                                    tint = PrimaryBlue,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "${file.name} (${file.length() / 1024} KB)",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = PrimaryBlue
-                                )
-                            }
-                            IconButton(
-                                onClick = { viewModel.removeAttachment() },
-                                modifier = Modifier.size(24.dp)
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                Icon(Icons.Default.Close, contentDescription = "Remove", tint = Color.Gray, modifier = Modifier.size(14.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                    Icon(Icons.Default.Audiotrack, contentDescription = null, tint = SecondaryTeal, modifier = Modifier.size(20.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column {
+                                        Text(text = "Voice Note (${file.length() / 1024} KB)", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = SecondaryTeal)
+                                        Text(text = if (isPlayingAudio) "▶️ Playing..." else "Tap play to listen", fontSize = 11.sp, color = TextSecondary)
+                                    }
+                                }
+
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    IconButton(
+                                        onClick = { viewModel.toggleAudioPlayback() },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = if (isPlayingAudio) Icons.Default.PauseCircle else Icons.Default.PlayCircle,
+                                            contentDescription = "Play/Pause",
+                                            tint = SecondaryTeal,
+                                            modifier = Modifier.size(26.dp)
+                                        )
+                                    }
+
+                                    IconButton(
+                                        onClick = { viewModel.removeAttachment() },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.Gray, modifier = Modifier.size(18.dp))
+                                    }
+                                }
                             }
                         }
                     }
 
-                    // 2. Smart Extraction Chips Deck
+                    // Attached Media Card: Video Note
+                    if (mediaType == MediaType.VIDEO && mediaFile != null) {
+                        val file = mediaFile!!
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = CardDefaults.cardColors(containerColor = PrimaryBlue.copy(alpha = 0.08f))
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                    Icon(Icons.Default.Videocam, contentDescription = null, tint = PrimaryBlue, modifier = Modifier.size(22.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column {
+                                        Text(text = "Video Note (${file.length() / (1024 * 1024)} MB)", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = PrimaryBlue)
+                                        Text(text = "Ready to attach", fontSize = 11.sp, color = TextSecondary)
+                                    }
+                                }
+
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Button(
+                                        onClick = {
+                                            try {
+                                                val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                                                val intent = Intent(Intent.ACTION_VIEW).apply {
+                                                    setDataAndType(uri, "video/*")
+                                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                                }
+                                                context.startActivity(intent)
+                                            } catch (e: Exception) {
+                                                Toast.makeText(context, "Cannot open video player: ${e.message}", Toast.LENGTH_SHORT).show()
+                                            }
+                                        },
+                                        shape = RoundedCornerShape(8.dp),
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = PrimaryBlue)
+                                    ) {
+                                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(14.dp))
+                                        Spacer(modifier = Modifier.width(2.dp))
+                                        Text("Watch", fontSize = 11.sp)
+                                    }
+
+                                    Spacer(modifier = Modifier.width(4.dp))
+
+                                    IconButton(
+                                        onClick = { viewModel.removeAttachment() },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.Gray, modifier = Modifier.size(18.dp))
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Smart Extraction Chips Deck
                     AnimatedVisibility(
-                        visible = parsedPreview != null && (parsedPreview?.amount ?: 0.0) > 0 || (parsedPreview?.personName != null),
+                        visible = parsedPreview != null && ((parsedPreview?.amount ?: 0.0) > 0 || (parsedPreview?.personName != null)),
                         enter = fadeIn() + slideInVertically()
                     ) {
                         Column(modifier = Modifier.padding(top = 12.dp)) {
@@ -448,7 +531,7 @@ fun NewEntryScreen(
                                 contentColor = if (transactionType == TransactionType.GOT) SurfaceWhite else GotGreen
                             )
                         ) {
-                            Icon(Icons.Default.CallReceived, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Icon(Icons.Default.ArrowDownward, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(6.dp))
                             Text("You Got (लिया)", fontWeight = FontWeight.SemiBold)
                         }
@@ -459,7 +542,7 @@ fun NewEntryScreen(
                         value = personName,
                         onValueChange = { viewModel.personName.value = it },
                         modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Person Name (नाम)") },
+                        label = { Text("Person / Party Name (नाम)*") },
                         leadingIcon = { Icon(Icons.Default.Person, contentDescription = null, tint = PrimaryBlue) },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
@@ -472,82 +555,32 @@ fun NewEntryScreen(
                         onValueChange = { viewModel.amountText.value = it },
                         modifier = Modifier.fillMaxWidth(),
                         label = { Text("Amount (रुपये)") },
-                        leadingIcon = {
-                            Text(
-                                "₹",
-                                fontSize = 20.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = if (transactionType == TransactionType.GAVE) GaveRed else GotGreen,
-                                modifier = Modifier.padding(start = 12.dp)
-                            )
-                        },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        leadingIcon = { Text("₹", fontWeight = FontWeight.Bold, fontSize = 20.sp, color = PrimaryBlue, modifier = Modifier.padding(start = 12.dp)) },
+                        placeholder = { Text("0") },
                         singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         shape = RoundedCornerShape(12.dp)
                     )
 
-                    // Prominent Editable Transaction Date
-                    if (showEntryDatePicker) {
-                        val datePickerState = rememberDatePickerState(initialSelectedDateMillis = entryDate)
-                        DatePickerDialog(
-                            onDismissRequest = { showEntryDatePicker = false },
-                            confirmButton = {
-                                TextButton(
-                                    onClick = {
-                                        datePickerState.selectedDateMillis?.let { selected ->
-                                            viewModel.entryDate.value = selected
-                                        }
-                                        showEntryDatePicker = false
-                                    }
-                                ) {
-                                    Text("Select Date")
-                                }
-                            },
-                            dismissButton = {
-                                TextButton(onClick = { showEntryDatePicker = false }) {
-                                    Text("Cancel")
-                                }
-                            }
-                        ) {
-                            DatePicker(state = datePickerState)
-                        }
-                    }
-
-                    Card(
+                    // Editable Transaction Date Field (DatePicker)
+                    OutlinedTextField(
+                        value = Formatters.formatDate(entryDate),
+                        onValueChange = {},
+                        readOnly = true,
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable { showEntryDatePicker = true },
-                        shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.cardColors(containerColor = PrimaryBlue.copy(alpha = 0.06f))
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 14.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.CalendarToday, contentDescription = null, tint = PrimaryBlue, modifier = Modifier.size(20.dp))
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Column {
-                                    Text("Transaction Date (तारीख)", fontSize = 11.sp, color = TextSecondary)
-                                    Text(
-                                        Formatters.formatShortDate(entryDate),
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 15.sp,
-                                        color = TextPrimary
-                                    )
-                                }
+                        label = { Text("Entry Date (तारीख)") },
+                        leadingIcon = {
+                            Icon(Icons.Default.CalendarToday, contentDescription = null, tint = PrimaryBlue)
+                        },
+                        trailingIcon = {
+                            IconButton(onClick = { showEntryDatePicker = true }) {
+                                Icon(Icons.Default.EditCalendar, contentDescription = "Select Date", tint = PrimaryBlue)
                             }
-                            Text(
-                                "Change Date 📅",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = SecondaryTeal
-                            )
-                        }
-                    }
+                        },
+                        shape = RoundedCornerShape(12.dp)
+                    )
 
                     // Notes / Tags Field
                     OutlinedTextField(
@@ -585,6 +618,47 @@ fun NewEntryScreen(
             Spacer(modifier = Modifier.height(30.dp))
         }
 
+        // Live Speech-To-Text Dialog (Real-time on-screen transcription)
+        if (showLiveSpeechDialog) {
+            LiveSpeechToTextDialog(
+                onDismiss = { showLiveSpeechDialog = false },
+                onApplySpokenText = { spoken ->
+                    viewModel.onSpeechRecognized(spoken)
+                },
+                onFallbackToAudioRecorder = {
+                    val hasPerm = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+                    if (hasPerm) viewModel.startVoiceRecording() else micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                }
+            )
+        }
+
+        // Date Picker Dialog
+        if (showEntryDatePicker) {
+            val datePickerState = rememberDatePickerState(initialSelectedDateMillis = entryDate)
+            DatePickerDialog(
+                onDismissRequest = { showEntryDatePicker = false },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            datePickerState.selectedDateMillis?.let { selected ->
+                                viewModel.entryDate.value = selected
+                            }
+                            showEntryDatePicker = false
+                        }
+                    ) {
+                        Text("Select Date")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showEntryDatePicker = false }) {
+                        Text("Cancel")
+                    }
+                }
+            ) {
+                DatePicker(state = datePickerState)
+            }
+        }
+
         // Video Choice Dialog (Camera vs Gallery)
         if (showVideoChoiceDialog) {
             AlertDialog(
@@ -592,7 +666,7 @@ fun NewEntryScreen(
                 title = { Text("Attach Video Note", fontWeight = FontWeight.Bold) },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Record a short video or pick a video receipt from files:", fontSize = 13.sp, color = TextSecondary)
+                        Text("Record a short video or pick a video note from files:", fontSize = 13.sp, color = TextSecondary)
                         Spacer(modifier = Modifier.height(4.dp))
 
                         // Option 1: Camera
@@ -636,7 +710,7 @@ fun NewEntryScreen(
                                 Spacer(modifier = Modifier.width(12.dp))
                                 Column {
                                     Text("Pick from Gallery / Files", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                                    Text("Select any video from phone/emulator storage", fontSize = 11.sp, color = TextSecondary)
+                                    Text("Select any video from storage", fontSize = 11.sp, color = TextSecondary)
                                 }
                             }
                         }

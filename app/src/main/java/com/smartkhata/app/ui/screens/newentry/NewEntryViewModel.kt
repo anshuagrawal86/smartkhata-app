@@ -12,6 +12,7 @@ import com.smartkhata.app.data.model.TransactionType
 import com.smartkhata.app.data.parser.GeminiHinglishParser
 import com.smartkhata.app.data.parser.LocalHinglishParser
 import com.smartkhata.app.data.repository.LedgerRepository
+import com.smartkhata.app.util.AudioPlayerHelper
 import com.smartkhata.app.util.AudioRecorderUtil
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -42,11 +43,22 @@ class NewEntryViewModel(
 
     val isRecordingAudio = MutableStateFlow(false)
     val recordingDurationSeconds = MutableStateFlow(0)
-    val currentAudioAmplitude = MutableStateFlow(0)
+    val isPlayingAudio = MutableStateFlow(false)
     val isProcessingAI = MutableStateFlow(false)
     val saveSuccess = MutableStateFlow(false)
     val errorMessage = MutableStateFlow<String?>(null)
     val infoMessage = MutableStateFlow<String?>(null)
+
+    fun init(mode: String, contactId: Long) {
+        if (contactId > 0) {
+            viewModelScope.launch {
+                val contact = repository.getContactById(contactId)
+                contact?.let {
+                    personName.value = it.name
+                }
+            }
+        }
+    }
 
     fun onInputTextChanged(text: String) {
         inputText.value = text
@@ -78,7 +90,7 @@ class NewEntryViewModel(
     fun parseAndApplyText() {
         val text = inputText.value.trim()
         if (text.isEmpty()) {
-            errorMessage.value = "Please type something to convert (e.g., 'Ramesh 500' or 'Anita se 1200 mila')"
+            errorMessage.value = "Please type or speak something to convert"
             return
         }
         val parsed = LocalHinglishParser.parse(text)
@@ -90,7 +102,9 @@ class NewEntryViewModel(
         if (parsed.amount > 0) {
             amountText.value = if (parsed.amount % 1.0 == 0.0) parsed.amount.toInt().toString() else parsed.amount.toString()
         }
-        transactionType.value = parsed.type
+        if (parsed.type != TransactionType.NOTE) {
+            transactionType.value = parsed.type
+        }
         if (parsed.description.isNotBlank()) {
             notes.value = parsed.description
         }
@@ -102,13 +116,13 @@ class NewEntryViewModel(
 
     fun startVoiceRecording() {
         try {
+            stopAudioPlayback()
             val file = audioRecorder.startRecording()
             mediaFile.value = file
             mediaType.value = MediaType.AUDIO
             isRecordingAudio.value = true
             recordingDurationSeconds.value = 0
 
-            // Background timer & amplitude ticker
             viewModelScope.launch {
                 while (isRecordingAudio.value) {
                     kotlinx.coroutines.delay(1000)
@@ -125,7 +139,11 @@ class NewEntryViewModel(
         isRecordingAudio.value = false
         if (file != null && file.exists()) {
             mediaFile.value = file
-            infoMessage.value = "Audio recorded (${file.length() / 1024} KB). Processing..."
+            mediaType.value = MediaType.AUDIO
+            if (notes.value.isBlank()) {
+                notes.value = "Voice note (${file.length() / 1024} KB)"
+            }
+            infoMessage.value = "Voice note attached successfully!"
             processAudioWithAI(file)
         }
     }
@@ -140,20 +158,19 @@ class NewEntryViewModel(
 
     private fun processAudioWithAI(file: File) {
         viewModelScope.launch {
-            isProcessingAI.value = true
             try {
+                isProcessingAI.value = true
                 val parsed = geminiParser.parseAudioFile(file)
                 if (parsed.personName != null) personName.value = parsed.personName
                 if (parsed.amount > 0) amountText.value = parsed.amount.toInt().toString()
-                transactionType.value = parsed.type
+                if (parsed.type != TransactionType.NOTE) transactionType.value = parsed.type
                 if (parsed.description.isNotBlank()) {
                     if (inputText.value.isBlank()) inputText.value = parsed.description
                     notes.value = parsed.description
                 }
                 if (parsed.dueDateEpochMs != null) dueDate.value = parsed.dueDateEpochMs
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 // Audio file is saved locally regardless
-                infoMessage.value = "Voice note attached to entry"
             } finally {
                 isProcessingAI.value = false
             }
@@ -163,18 +180,21 @@ class NewEntryViewModel(
     fun setVideoRecorded(file: File) {
         mediaFile.value = file
         mediaType.value = MediaType.VIDEO
+        if (notes.value.isBlank()) {
+            notes.value = "Video note (${file.length() / (1024 * 1024)} MB)"
+        }
         infoMessage.value = "Video note attached (${file.name})"
 
         viewModelScope.launch {
-            isProcessingAI.value = true
             try {
+                isProcessingAI.value = true
                 val parsed = geminiParser.parseVideoFile(file)
                 if (parsed.personName != null) personName.value = parsed.personName
                 if (parsed.amount > 0) amountText.value = parsed.amount.toInt().toString()
-                transactionType.value = parsed.type
+                if (parsed.type != TransactionType.NOTE) transactionType.value = parsed.type
                 if (parsed.description.isNotBlank()) notes.value = parsed.description
                 if (parsed.dueDateEpochMs != null) dueDate.value = parsed.dueDateEpochMs
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 // Video file is saved locally
             } finally {
                 isProcessingAI.value = false
@@ -201,43 +221,74 @@ class NewEntryViewModel(
         }
     }
 
+    fun toggleAudioPlayback() {
+        val file = mediaFile.value
+        if (file == null || !file.exists()) return
+
+        if (isPlayingAudio.value) {
+            stopAudioPlayback()
+        } else {
+            AudioPlayerHelper.play(file.absolutePath) {
+                isPlayingAudio.value = false
+            }
+            isPlayingAudio.value = true
+        }
+    }
+
+    fun stopAudioPlayback() {
+        AudioPlayerHelper.stop()
+        isPlayingAudio.value = false
+    }
+
     fun removeAttachment() {
+        stopAudioPlayback()
         mediaFile.value = null
         mediaType.value = MediaType.TEXT
         infoMessage.value = "Attachment removed"
     }
 
     fun saveEntry() {
-        val name = personName.value.trim()
+        var name = personName.value.trim()
         val amount = amountText.value.toDoubleOrNull() ?: 0.0
 
         if (name.isBlank()) {
-            errorMessage.value = "Please enter or speak the person's name"
-            return
+            if (mediaType.value == MediaType.AUDIO) {
+                name = "Voice Note"
+            } else if (mediaType.value == MediaType.VIDEO) {
+                name = "Video Note"
+            } else {
+                errorMessage.value = "Please enter or speak the person's name"
+                return
+            }
         }
-        if (amount <= 0.0 && transactionType.value != TransactionType.NOTE) {
-            errorMessage.value = "Please specify a valid amount"
-            return
-        }
+
+        // Allow saving as NOTE if no amount was given
+        val resolvedType = if (amount <= 0.0) TransactionType.NOTE else transactionType.value
 
         viewModelScope.launch {
             try {
+                stopAudioPlayback()
                 repository.saveEntry(
                     contactName = name,
                     amount = amount,
-                    type = transactionType.value,
+                    type = resolvedType,
                     rawText = inputText.value,
                     entryDate = entryDate.value,
                     dueDate = dueDate.value,
                     mediaType = mediaType.value,
                     mediaPath = mediaFile.value?.absolutePath,
-                    notes = notes.value
+                    notes = if (notes.value.isNotBlank()) notes.value else if (mediaType.value != MediaType.TEXT) "${mediaType.value.name.lowercase().replaceFirstChar { it.uppercase() }} entry" else ""
                 )
                 saveSuccess.value = true
             } catch (e: Exception) {
                 errorMessage.value = "Failed to save: ${e.message}"
             }
         }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        stopAudioPlayback()
     }
 
     class Factory(

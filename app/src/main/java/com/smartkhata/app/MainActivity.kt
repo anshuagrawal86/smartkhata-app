@@ -150,12 +150,14 @@ fun MainAppScaffold() {
                 )
             ) { backStackEntry ->
                 val mode = backStackEntry.arguments?.getString("mode") ?: "type"
+                val contactId = backStackEntry.arguments?.getLong("contactId") ?: 0L
                 val vm: NewEntryViewModel = viewModel(
                     factory = NewEntryViewModel.Factory(app, app.ledgerRepository)
                 )
                 NewEntryScreen(
                     viewModel = vm,
                     initialMode = mode,
+                    contactId = contactId,
                     onNavigateBack = { navController.popBackStack() }
                 )
             }
