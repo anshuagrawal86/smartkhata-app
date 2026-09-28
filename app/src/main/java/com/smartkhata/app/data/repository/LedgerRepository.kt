@@ -96,6 +96,31 @@ class LedgerRepository(private val db: AppDatabase) {
         recalculateContactBalance(entry.contactId)
     }
 
+    suspend fun updateEntry(
+        entryId: Long,
+        contactName: String,
+        amount: Double,
+        type: TransactionType,
+        entryDate: Long,
+        notes: String
+    ) = withContext(Dispatchers.IO) {
+        val oldEntry = entryDao.getEntryById(entryId) ?: return@withContext
+        val newContact = getOrCreateContact(contactName)
+        val updated = oldEntry.copy(
+            contactId = newContact.id,
+            contactName = newContact.name,
+            amount = amount,
+            transactionType = type,
+            entryDate = entryDate,
+            notes = notes
+        )
+        entryDao.updateEntry(updated)
+        recalculateContactBalance(newContact.id)
+        if (oldEntry.contactId != newContact.id) {
+            recalculateContactBalance(oldEntry.contactId)
+        }
+    }
+
     suspend fun recalculateContactBalance(contactId: Long) = withContext(Dispatchers.IO) {
         val contact = contactDao.getContactById(contactId) ?: return@withContext
         val entries = entryDao.getEntriesByContact(contactId)

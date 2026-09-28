@@ -105,6 +105,20 @@ class ContactLedgerViewModel(
         isSelectionMode.value = false
     }
 
+    fun updateEntry(
+        entryId: Long,
+        contactName: String,
+        amount: Double,
+        type: TransactionType,
+        entryDate: Long,
+        notes: String
+    ) {
+        viewModelScope.launch {
+            repository.updateEntry(entryId, contactName, amount, type, entryDate, notes)
+            loadContact()
+        }
+    }
+
     fun deleteEntry(entry: EntryEntity) {
         viewModelScope.launch {
             repository.deleteEntry(entry)

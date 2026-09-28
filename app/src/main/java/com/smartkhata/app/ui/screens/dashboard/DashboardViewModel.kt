@@ -82,6 +82,19 @@ class DashboardViewModel(private val repository: LedgerRepository) : ViewModel()
         isSelectionMode.value = false
     }
 
+    fun updateEntry(
+        entryId: Long,
+        contactName: String,
+        amount: Double,
+        type: TransactionType,
+        entryDate: Long,
+        notes: String
+    ) {
+        viewModelScope.launch {
+            repository.updateEntry(entryId, contactName, amount, type, entryDate, notes)
+        }
+    }
+
     fun deleteEntry(entry: EntryEntity) {
         viewModelScope.launch {
             repository.deleteEntry(entry)

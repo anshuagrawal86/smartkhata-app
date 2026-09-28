@@ -18,6 +18,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.smartkhata.app.data.model.TransactionType
+import com.smartkhata.app.ui.components.EditEntryDialog
 import com.smartkhata.app.ui.components.SelectedSummaryBottomDock
 import com.smartkhata.app.ui.components.TransactionItemCard
 import com.smartkhata.app.ui.theme.*
@@ -40,6 +41,7 @@ fun DashboardScreen(
     val isSelectionMode by viewModel.isSelectionMode.collectAsState()
 
     var showFabMenu by remember { mutableStateOf(false) }
+    var editingEntry by remember { mutableStateOf<EntryEntity?>(null) }
 
     // Selected Items Totals
     val selectedEntries = remember(entries, selectedIds) {
@@ -413,6 +415,7 @@ fun DashboardScreen(
                         isSelected = selectedIds.contains(entry.id),
                         isSelectionMode = isSelectionMode,
                         onClick = { onNavigateToContactLedger(entry.contactId) },
+                        onEdit = { editingEntry = entry },
                         onLongClick = { viewModel.toggleSelection(entry.id) },
                         onDelete = { viewModel.deleteEntry(entry) }
                     )
@@ -422,6 +425,18 @@ fun DashboardScreen(
             item {
                 Spacer(modifier = Modifier.height(90.dp))
             }
+        }
+
+        // Edit Entry Dialog
+        editingEntry?.let { entryToEdit ->
+            EditEntryDialog(
+                entry = entryToEdit,
+                onDismiss = { editingEntry = null },
+                onSave = { name, amt, type, date, notes ->
+                    viewModel.updateEntry(entryToEdit.id, name, amt, type, date, notes)
+                    editingEntry = null
+                }
+            )
         }
     }
 }

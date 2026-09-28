@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.smartkhata.app.data.local.entity.EntryEntity
 import com.smartkhata.app.data.model.TransactionType
+import com.smartkhata.app.ui.components.EditEntryDialog
 import com.smartkhata.app.ui.components.SelectedSummaryBottomDock
 import com.smartkhata.app.ui.components.TransactionItemCard
 import com.smartkhata.app.ui.theme.*
@@ -40,6 +41,8 @@ fun ContactLedgerScreen(
     val activeFilter by viewModel.dateFilter.collectAsState()
     val selectedIds by viewModel.selectedEntryIds.collectAsState()
     val isSelectionMode by viewModel.isSelectionMode.collectAsState()
+
+    var editingEntry by remember { mutableStateOf<EntryEntity?>(null) }
 
     // Filtered Period Totals
     var periodGave by remember { mutableDoubleStateOf(0.0) }
@@ -363,7 +366,12 @@ fun ContactLedgerScreen(
                         isSelected = selectedIds.contains(entry.id),
                         isSelectionMode = isSelectionMode,
                         onClick = {
-                            // View details
+                            if (!isSelectionMode) {
+                                editingEntry = entry
+                            }
+                        },
+                        onEdit = {
+                            editingEntry = entry
                         },
                         onLongClick = {
                             viewModel.toggleSelection(entry.id)
@@ -376,6 +384,18 @@ fun ContactLedgerScreen(
             item {
                 Spacer(modifier = Modifier.height(90.dp))
             }
+        }
+
+        // Edit Entry Dialog
+        editingEntry?.let { entryToEdit ->
+            EditEntryDialog(
+                entry = entryToEdit,
+                onDismiss = { editingEntry = null },
+                onSave = { name, amt, type, date, notes ->
+                    viewModel.updateEntry(entryToEdit.id, name, amt, type, date, notes)
+                    editingEntry = null
+                }
+            )
         }
     }
 }

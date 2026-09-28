@@ -64,12 +64,14 @@ fun NewEntryScreen(
 
     val isRecordingAudio by viewModel.isRecordingAudio.collectAsState()
     val recordingDuration by viewModel.recordingDurationSeconds.collectAsState()
+    val entryDate by viewModel.entryDate.collectAsState()
     val isProcessingAI by viewModel.isProcessingAI.collectAsState()
     val saveSuccess by viewModel.saveSuccess.collectAsState()
     val errorMessage by viewModel.errorMessage.collectAsState()
     val infoMessage by viewModel.infoMessage.collectAsState()
 
     var showVideoChoiceDialog by remember { mutableStateOf(false) }
+    var showEntryDatePicker by remember { mutableStateOf(false) }
 
     // Fallback System Speech Recognition Dialog Intent (works on Google Keyboard / standard dialogs)
     val speechDialogLauncher = rememberLauncherForActivityResult(
@@ -483,6 +485,69 @@ fun NewEntryScreen(
                         singleLine = true,
                         shape = RoundedCornerShape(12.dp)
                     )
+
+                    // Prominent Editable Transaction Date
+                    if (showEntryDatePicker) {
+                        val datePickerState = rememberDatePickerState(initialSelectedDateMillis = entryDate)
+                        DatePickerDialog(
+                            onDismissRequest = { showEntryDatePicker = false },
+                            confirmButton = {
+                                TextButton(
+                                    onClick = {
+                                        datePickerState.selectedDateMillis?.let { selected ->
+                                            viewModel.entryDate.value = selected
+                                        }
+                                        showEntryDatePicker = false
+                                    }
+                                ) {
+                                    Text("Select Date")
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { showEntryDatePicker = false }) {
+                                    Text("Cancel")
+                                }
+                            }
+                        ) {
+                            DatePicker(state = datePickerState)
+                        }
+                    }
+
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { showEntryDatePicker = true },
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = PrimaryBlue.copy(alpha = 0.06f))
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.CalendarToday, contentDescription = null, tint = PrimaryBlue, modifier = Modifier.size(20.dp))
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column {
+                                    Text("Transaction Date (तारीख)", fontSize = 11.sp, color = TextSecondary)
+                                    Text(
+                                        Formatters.formatShortDate(entryDate),
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 15.sp,
+                                        color = TextPrimary
+                                    )
+                                }
+                            }
+                            Text(
+                                "Change Date 📅",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = SecondaryTeal
+                            )
+                        }
+                    }
 
                     // Notes / Tags Field
                     OutlinedTextField(

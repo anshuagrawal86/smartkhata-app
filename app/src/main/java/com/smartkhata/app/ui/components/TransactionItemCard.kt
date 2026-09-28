@@ -8,11 +8,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.RadioButtonUnchecked
-import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -35,6 +31,7 @@ fun TransactionItemCard(
     isSelected: Boolean = false,
     isSelectionMode: Boolean = false,
     onClick: () -> Unit = {},
+    onEdit: () -> Unit = {},
     onLongClick: () -> Unit = {},
     onDelete: () -> Unit = {}
 ) {
@@ -49,7 +46,7 @@ fun TransactionItemCard(
             .combinedClickable(
                 onClick = {
                     if (isSelectionMode) {
-                        onLongClick() // Toggle selection
+                        onLongClick()
                     } else {
                         onClick()
                     }
@@ -83,7 +80,7 @@ fun TransactionItemCard(
                 // Avatar with initial
                 Box(
                     modifier = Modifier
-                        .size(42.dp)
+                        .size(44.dp)
                         .clip(CircleShape)
                         .background(
                             when (entry.transactionType) {
@@ -97,7 +94,7 @@ fun TransactionItemCard(
                     Text(
                         text = entry.contactName.take(1).uppercase(),
                         fontWeight = FontWeight.Bold,
-                        fontSize = 17.sp,
+                        fontSize = 18.sp,
                         color = when (entry.transactionType) {
                             TransactionType.GAVE -> GaveRed
                             TransactionType.GOT -> GotGreen
@@ -114,7 +111,7 @@ fun TransactionItemCard(
                     Text(
                         text = entry.contactName,
                         fontWeight = FontWeight.SemiBold,
-                        fontSize = 15.sp,
+                        fontSize = 16.sp,
                         color = TextPrimary
                     )
 
@@ -147,14 +144,28 @@ fun TransactionItemCard(
                     )
                 }
 
-                Text(
-                    text = Formatters.formatDate(entry.entryDate),
-                    fontSize = 11.sp,
-                    color = Color.Gray
-                )
+                // Highly Visible, Prominent Date Row
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(top = 3.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.CalendarToday,
+                        contentDescription = null,
+                        modifier = Modifier.size(13.dp),
+                        tint = TextSecondary
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = Formatters.formatDate(entry.entryDate),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = TextSecondary
+                    )
+                }
             }
 
-            // Amount and Action
+            // Amount and Action Icons
             Column(horizontalAlignment = Alignment.End) {
                 val amountText = when (entry.transactionType) {
                     TransactionType.GAVE -> "- ${Formatters.formatCurrency(entry.amount)}"
@@ -176,16 +187,34 @@ fun TransactionItemCard(
                 )
 
                 if (!isSelectionMode) {
-                    IconButton(
-                        onClick = onDelete,
-                        modifier = Modifier.size(26.dp)
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(top = 4.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Delete,
-                            contentDescription = "Delete entry",
-                            tint = Color.LightGray,
-                            modifier = Modifier.size(15.dp)
-                        )
+                        IconButton(
+                            onClick = onEdit,
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Edit,
+                                contentDescription = "Edit entry",
+                                tint = SecondaryTeal,
+                                modifier = Modifier.size(17.dp)
+                            )
+                        }
+
+                        IconButton(
+                            onClick = onDelete,
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = "Delete entry",
+                                tint = Color.LightGray,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
                     }
                 }
             }
