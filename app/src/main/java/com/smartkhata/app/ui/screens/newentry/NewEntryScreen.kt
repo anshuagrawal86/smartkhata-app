@@ -6,10 +6,12 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -44,7 +46,7 @@ import com.smartkhata.app.ui.theme.*
 import com.smartkhata.app.util.Formatters
 import java.io.File
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun NewEntryScreen(
     viewModel: NewEntryViewModel,
@@ -65,6 +67,7 @@ fun NewEntryScreen(
 
     val isRecordingAudio by viewModel.isRecordingAudio.collectAsState()
     val recordingDuration by viewModel.recordingDurationSeconds.collectAsState()
+    val audioAmplitudes by viewModel.audioAmplitudes.collectAsState()
     val isPlayingAudio by viewModel.isPlayingAudio.collectAsState()
     val entryDate by viewModel.entryDate.collectAsState()
     val isProcessingAI by viewModel.isProcessingAI.collectAsState()
@@ -76,7 +79,63 @@ fun NewEntryScreen(
     var showVideoChoiceDialog by remember { mutableStateOf(false) }
     var showEntryDatePicker by remember { mutableStateOf(false) }
 
-    // Initialize contact or trigger initial mode
+    // Safe File Provider URI generator for video capture
+    var pendingVideoFile by remember { mutableStateOf<File?>(null) }
+    var pendingVideoUri by remember { mutableStateOf<Uri?>(null) }
+
+    fun prepareVideoUri(): Uri {
+        val mediaDir = File(context.filesDir, "media").apply { mkdirs() }
+        val file = File(mediaDir, "VID_${System.currentTimeMillis()}.mp4")
+        pendingVideoFile = file
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        pendingVideoUri = uri
+        return uri
+    }
+
+    // 1. Video Capture Launcher (With runtime camera permission check)
+    val videoCaptureLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CaptureVideo()
+    ) { success ->
+        val file = pendingVideoFile
+        if (success && file != null && file.exists() && file.length() > 0) {
+            viewModel.setVideoRecorded(file)
+        }
+    }
+
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            try {
+                val uri = prepareVideoUri()
+                videoCaptureLauncher.launch(uri)
+            } catch (e: Exception) {
+                Toast.makeText(context, "Could not open camera: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            Toast.makeText(context, "Camera permission required to record video", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // 2. Video Gallery Picker Launcher (Never crashes on emulators or Pixels)
+    val videoGalleryLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri ->
+        uri?.let { viewModel.copyPickedVideoToInternalStorage(it) }
+    }
+
+    // 3. Audio / Mic Permission Launcher
+    val micPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            showLiveSpeechDialog = true
+        } else {
+            Toast.makeText(context, "Microphone permission required for voice notes", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // Initial setup
     LaunchedEffect(Unit) {
         viewModel.init(initialMode, contactId)
         when (initialMode) {
@@ -84,40 +143,13 @@ fun NewEntryScreen(
                 val hasPerm = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
                 if (hasPerm) {
                     showLiveSpeechDialog = true
+                } else {
+                    micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                 }
             }
             "video" -> {
                 showVideoChoiceDialog = true
             }
-        }
-    }
-
-    // Video Capture Launcher
-    val videoCaptureLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CaptureVideo()
-    ) { success ->
-        viewModel.mediaFile.value?.let { file ->
-            if (success && file.exists() && file.length() > 0) {
-                viewModel.setVideoRecorded(file)
-            }
-        }
-    }
-
-    // Video Gallery / Files Picker Launcher (100% reliable on BlueStacks & real devices)
-    val videoGalleryLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri ->
-        uri?.let { viewModel.copyPickedVideoToInternalStorage(it) }
-    }
-
-    // Permission launcher for Mic
-    val micPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) {
-            showLiveSpeechDialog = true
-        } else {
-            Toast.makeText(context, "Microphone permission required for voice input", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -143,6 +175,7 @@ fun NewEntryScreen(
     }
 
     Scaffold(
+        contentWindowInsets = WindowInsets.safeDrawing,
         topBar = {
             TopAppBar(
                 title = { Text("New Diary & Ledger Entry", fontWeight = FontWeight.Bold, color = SurfaceWhite) },
@@ -153,6 +186,38 @@ fun NewEntryScreen(
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = PrimaryBlue)
             )
+        },
+        bottomBar = {
+            // Sticky Bottom Action Dock above System Navigation Bar & Keyboard
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .imePadding(),
+                tonalElevation = 3.dp,
+                shadowElevation = 8.dp,
+                color = SurfaceWhite
+            ) {
+                Button(
+                    onClick = { viewModel.saveEntry() },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp)
+                        .height(52.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (transactionType == TransactionType.GAVE) GaveRed else GotGreen
+                    )
+                ) {
+                    Icon(Icons.Default.Check, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Save Entry to Ledger (सेव करें)",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
         }
     ) { innerPadding ->
         Column(
@@ -161,15 +226,16 @@ fun NewEntryScreen(
                 .padding(innerPadding)
                 .background(BackgroundLight)
                 .verticalScroll(rememberScrollState())
-                .padding(16.dp),
+                .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // 1. Smart Text / Speech-to-Text Input Card
+            // 1. Smart Note / Voice & Video Input Card
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = SurfaceWhite),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
             ) {
                 Column(
                     modifier = Modifier
@@ -183,7 +249,7 @@ fun NewEntryScreen(
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.RecordVoiceOver, contentDescription = null, tint = PrimaryBlue, modifier = Modifier.size(20.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 text = "Voice / Note Input",
                                 fontSize = 15.sp,
@@ -192,47 +258,42 @@ fun NewEntryScreen(
                             )
                         }
 
-                        // Quick Speech-to-Text Mic Button
+                        // Mic Button
                         IconButton(
                             onClick = {
                                 val hasPerm = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-                                if (hasPerm) {
-                                    showLiveSpeechDialog = true
-                                } else {
-                                    micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                                }
+                                if (hasPerm) showLiveSpeechDialog = true else micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                             }
                         ) {
                             Icon(Icons.Default.Mic, contentDescription = "Live Speech-to-Text", tint = PrimaryBlue)
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
 
-                    // Text Area for Note
+                    // Main Free-form Note Text Box
                     OutlinedTextField(
                         value = inputText,
                         onValueChange = { viewModel.onInputTextChanged(it) },
                         modifier = Modifier.fillMaxWidth(),
                         placeholder = {
-                            Text("Type or speak: 'Ramesh 500' or 'Anita se 1200 mila' or 'Paid milk 60'…", fontSize = 13.sp)
+                            Text("Type or speak: 'Paid 500 to Ramesh for groceries' or 'Anita se 1200 mila'…", fontSize = 13.sp, color = Color.Gray)
                         },
-                        minLines = 2,
-                        maxLines = 4,
+                        minLines = 3,
+                        maxLines = 6,
                         shape = RoundedCornerShape(12.dp)
                     )
 
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
 
-                    // Action buttons row: [⚡ Convert Text] [🎙️ Speak / Live STT] [📹 Video Note]
+                    // Action buttons row: [⚡ Convert Note] [🎙️ Speak / Live STT] [📹 Video]
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        // 1. Explicit Convert Button
                         Button(
                             onClick = { viewModel.parseAndApplyText() },
-                            modifier = Modifier.weight(1.2f),
+                            modifier = Modifier.weight(1.2f).height(44.dp),
                             shape = RoundedCornerShape(10.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = PrimaryBlue)
                         ) {
@@ -241,29 +302,23 @@ fun NewEntryScreen(
                             Text("Convert Note", fontSize = 12.sp)
                         }
 
-                        // 2. Speak Button (Live on-screen STT)
                         OutlinedButton(
                             onClick = {
                                 val hasPerm = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-                                if (hasPerm) {
-                                    showLiveSpeechDialog = true
-                                } else {
-                                    micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                                }
+                                if (hasPerm) showLiveSpeechDialog = true else micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                             },
-                            modifier = Modifier.weight(1.1f),
+                            modifier = Modifier.weight(1.1f).height(44.dp),
                             shape = RoundedCornerShape(10.dp),
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = PrimaryBlue)
                         ) {
                             Icon(Icons.Default.Mic, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Speak (बोलें)", fontSize = 12.sp)
+                            Text("Speak", fontSize = 12.sp)
                         }
 
-                        // 3. Video Note Button
                         OutlinedButton(
                             onClick = { showVideoChoiceDialog = true },
-                            modifier = Modifier.weight(1.0f),
+                            modifier = Modifier.weight(1.0f).height(44.dp),
                             shape = RoundedCornerShape(10.dp),
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = SecondaryTeal)
                         ) {
@@ -273,77 +328,133 @@ fun NewEntryScreen(
                         }
                     }
 
-                    // Direct Audio Recording fallback row
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = if (isRecordingAudio) "🔴 Recording: ${recordingDuration}s" else "Need to record audio memo?",
-                            fontSize = 12.sp,
-                            fontWeight = if (isRecordingAudio) FontWeight.Bold else FontWeight.Normal,
-                            color = if (isRecordingAudio) GaveRed else TextSecondary
-                        )
+                    // Direct Audio Recording Flow with Live Waveform
+                    Spacer(modifier = Modifier.height(10.dp))
+                    if (isRecordingAudio) {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = GaveRedBg),
+                            border = BorderStroke(1.dp, GaveRed.copy(alpha = 0.3f))
+                        ) {
+                            Column(
+                                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(10.dp)
+                                                .clip(CircleShape)
+                                                .background(GaveRed)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = "Recording: ${recordingDuration}s",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 13.sp,
+                                            color = GaveRed
+                                        )
+                                    }
 
-                        TextButton(
-                            onClick = {
-                                if (isRecordingAudio) {
-                                    viewModel.stopVoiceRecording()
-                                } else {
+                                    Button(
+                                        onClick = { viewModel.stopVoiceRecording() },
+                                        colors = ButtonDefaults.buttonColors(containerColor = GaveRed),
+                                        shape = RoundedCornerShape(8.dp),
+                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                                    ) {
+                                        Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Stop", fontSize = 12.sp)
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                // Live Waveform Bars
+                                Row(
+                                    modifier = Modifier.height(36.dp).fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceEvenly,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    val amps = audioAmplitudes.takeLast(24)
+                                    if (amps.isEmpty()) {
+                                        repeat(16) {
+                                            Box(modifier = Modifier.width(3.dp).height(6.dp).background(GaveRed.copy(alpha = 0.4f), RoundedCornerShape(2.dp)))
+                                        }
+                                    } else {
+                                        amps.forEach { amp ->
+                                            val barHeight = (amp * 36f).coerceIn(4f, 36f).dp
+                                            Box(modifier = Modifier.width(3.dp).height(barHeight).background(GaveRed, RoundedCornerShape(2.dp)))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Or record a quick voice audio clip:",
+                                fontSize = 12.sp,
+                                color = TextSecondary
+                            )
+
+                            TextButton(
+                                onClick = {
                                     val hasPerm = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
                                     if (hasPerm) viewModel.startVoiceRecording() else micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                                 }
+                            ) {
+                                Icon(Icons.Default.FiberManualRecord, contentDescription = null, modifier = Modifier.size(12.dp), tint = GaveRed)
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Record Voice Audio", fontSize = 12.sp, color = GaveRed, fontWeight = FontWeight.SemiBold)
                             }
-                        ) {
-                            Icon(
-                                if (isRecordingAudio) Icons.Default.Stop else Icons.Default.FiberManualRecord,
-                                contentDescription = null,
-                                modifier = Modifier.size(14.dp),
-                                tint = GaveRed
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(if (isRecordingAudio) "Stop Audio Rec" else "Record Voice Audio", fontSize = 12.sp, color = GaveRed)
                         }
                     }
 
-                    // Attached Media Card: Audio Note
+                    // Attached Media: Audio Note Player Card
                     if (mediaType == MediaType.AUDIO && mediaFile != null) {
                         val file = mediaFile!!
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
                         Card(
                             modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(10.dp),
-                            colors = CardDefaults.cardColors(containerColor = SecondaryTeal.copy(alpha = 0.08f))
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = SecondaryTeal.copy(alpha = 0.08f)),
+                            border = BorderStroke(1.dp, SecondaryTeal.copy(alpha = 0.3f))
                         ) {
                             Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(10.dp),
+                                modifier = Modifier.fillMaxWidth().padding(12.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                                    Icon(Icons.Default.Audiotrack, contentDescription = null, tint = SecondaryTeal, modifier = Modifier.size(20.dp))
-                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Icon(Icons.Default.Audiotrack, contentDescription = null, tint = SecondaryTeal, modifier = Modifier.size(24.dp))
+                                    Spacer(modifier = Modifier.width(10.dp))
                                     Column {
                                         Text(text = "Voice Note (${file.length() / 1024} KB)", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = SecondaryTeal)
-                                        Text(text = if (isPlayingAudio) "▶️ Playing..." else "Tap play to listen", fontSize = 11.sp, color = TextSecondary)
+                                        Text(text = if (isPlayingAudio) "▶️ Playing audio..." else "Tap play to review", fontSize = 11.sp, color = TextSecondary)
                                     }
                                 }
 
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     IconButton(
                                         onClick = { viewModel.toggleAudioPlayback() },
-                                        modifier = Modifier.size(32.dp)
+                                        modifier = Modifier.size(36.dp)
                                     ) {
                                         Icon(
                                             imageVector = if (isPlayingAudio) Icons.Default.PauseCircle else Icons.Default.PlayCircle,
                                             contentDescription = "Play/Pause",
                                             tint = SecondaryTeal,
-                                            modifier = Modifier.size(26.dp)
+                                            modifier = Modifier.size(28.dp)
                                         )
                                     }
 
@@ -358,28 +469,27 @@ fun NewEntryScreen(
                         }
                     }
 
-                    // Attached Media Card: Video Note
+                    // Attached Media: Video Note Card
                     if (mediaType == MediaType.VIDEO && mediaFile != null) {
                         val file = mediaFile!!
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
                         Card(
                             modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(10.dp),
-                            colors = CardDefaults.cardColors(containerColor = PrimaryBlue.copy(alpha = 0.08f))
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = PrimaryBlue.copy(alpha = 0.08f)),
+                            border = BorderStroke(1.dp, PrimaryBlue.copy(alpha = 0.3f))
                         ) {
                             Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(10.dp),
+                                modifier = Modifier.fillMaxWidth().padding(12.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                                    Icon(Icons.Default.Videocam, contentDescription = null, tint = PrimaryBlue, modifier = Modifier.size(22.dp))
-                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Icon(Icons.Default.Videocam, contentDescription = null, tint = PrimaryBlue, modifier = Modifier.size(26.dp))
+                                    Spacer(modifier = Modifier.width(10.dp))
                                     Column {
-                                        Text(text = "Video Note (${file.length() / (1024 * 1024)} MB)", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = PrimaryBlue)
-                                        Text(text = "Ready to attach", fontSize = 11.sp, color = TextSecondary)
+                                        Text(text = "Video Note Attached", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = PrimaryBlue)
+                                        Text(text = "${file.length() / (1024 * 1024)} MB", fontSize = 11.sp, color = TextSecondary)
                                     }
                                 }
 
@@ -394,11 +504,11 @@ fun NewEntryScreen(
                                                 }
                                                 context.startActivity(intent)
                                             } catch (e: Exception) {
-                                                Toast.makeText(context, "Cannot open video player: ${e.message}", Toast.LENGTH_SHORT).show()
+                                                Toast.makeText(context, "Cannot open video: ${e.message}", Toast.LENGTH_SHORT).show()
                                             }
                                         },
                                         shape = RoundedCornerShape(8.dp),
-                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                                         colors = ButtonDefaults.buttonColors(containerColor = PrimaryBlue)
                                     ) {
                                         Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(14.dp))
@@ -419,32 +529,32 @@ fun NewEntryScreen(
                         }
                     }
 
-                    // Smart Extraction Chips Deck
+                    // Extracted Entity Chips Deck
                     AnimatedVisibility(
                         visible = parsedPreview != null && ((parsedPreview?.amount ?: 0.0) > 0 || (parsedPreview?.personName != null)),
                         enter = fadeIn() + slideInVertically()
                     ) {
                         Column(modifier = Modifier.padding(top = 12.dp)) {
                             Text(
-                                text = "Auto-Detected Elements:",
-                                fontSize = 12.sp,
+                                text = "Smart Extracted (Tap to adjust):",
+                                fontSize = 11.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 color = TextSecondary
                             )
                             Spacer(modifier = Modifier.height(6.dp))
 
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            FlowRow(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 parsedPreview?.personName?.let { name ->
                                     SuggestionChip(
                                         onClick = {},
-                                        label = { Text("👤 $name") },
+                                        label = { Text("👤 $name", fontWeight = FontWeight.SemiBold) },
                                         colors = SuggestionChipDefaults.suggestionChipColors(
-                                            containerColor = PrimaryBlue.copy(alpha = 0.1f)
+                                            containerColor = PrimaryBlue.copy(alpha = 0.1f),
+                                            labelColor = PrimaryBlue
                                         )
                                     )
                                 }
@@ -453,9 +563,10 @@ fun NewEntryScreen(
                                     val amt = parsedPreview?.amount?.toInt() ?: 0
                                     SuggestionChip(
                                         onClick = {},
-                                        label = { Text("💰 ₹$amt") },
+                                        label = { Text("💰 ₹$amt", fontWeight = FontWeight.Bold) },
                                         colors = SuggestionChipDefaults.suggestionChipColors(
-                                            containerColor = GotGreenBg
+                                            containerColor = GotGreenBg,
+                                            labelColor = GotGreen
                                         )
                                     )
                                 }
@@ -463,18 +574,14 @@ fun NewEntryScreen(
                                 parsedPreview?.type?.let { t ->
                                     val isGave = t == TransactionType.GAVE
                                     SuggestionChip(
-                                        onClick = {},
-                                        label = { Text(if (isGave) "🔴 Gave (दिया)" else "🟢 Got (लिया)") },
+                                        onClick = {
+                                            viewModel.transactionType.value = if (isGave) TransactionType.GOT else TransactionType.GAVE
+                                        },
+                                        label = { Text(if (isGave) "🔴 You Gave (दिया)" else "🟢 You Got (लिया)") },
                                         colors = SuggestionChipDefaults.suggestionChipColors(
-                                            containerColor = if (isGave) GaveRedBg else GotGreenBg
+                                            containerColor = if (isGave) GaveRedBg else GotGreenBg,
+                                            labelColor = if (isGave) GaveRed else GotGreen
                                         )
-                                    )
-                                }
-
-                                if (parsedPreview?.description?.isNotBlank() == true) {
-                                    SuggestionChip(
-                                        onClick = {},
-                                        label = { Text("📝 ${parsedPreview?.description}") }
                                     )
                                 }
                             }
@@ -488,7 +595,8 @@ fun NewEntryScreen(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = SurfaceWhite),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
             ) {
                 Column(
                     modifier = Modifier
@@ -510,7 +618,7 @@ fun NewEntryScreen(
                     ) {
                         Button(
                             onClick = { viewModel.transactionType.value = TransactionType.GAVE },
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(1f).height(48.dp),
                             shape = RoundedCornerShape(12.dp),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = if (transactionType == TransactionType.GAVE) GaveRed else GaveRedBg,
@@ -519,12 +627,12 @@ fun NewEntryScreen(
                         ) {
                             Icon(Icons.Default.ArrowOutward, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("You Gave (दिया)", fontWeight = FontWeight.SemiBold)
+                            Text("You Gave (दिया)", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                         }
 
                         Button(
                             onClick = { viewModel.transactionType.value = TransactionType.GOT },
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(1f).height(48.dp),
                             shape = RoundedCornerShape(12.dp),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = if (transactionType == TransactionType.GOT) GotGreen else GotGreenBg,
@@ -533,7 +641,7 @@ fun NewEntryScreen(
                         ) {
                             Icon(Icons.Default.ArrowDownward, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("You Got (लिया)", fontWeight = FontWeight.SemiBold)
+                            Text("You Got (लिया)", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                         }
                     }
 
@@ -555,7 +663,7 @@ fun NewEntryScreen(
                         onValueChange = { viewModel.amountText.value = it },
                         modifier = Modifier.fillMaxWidth(),
                         label = { Text("Amount (रुपये)") },
-                        leadingIcon = { Text("₹", fontWeight = FontWeight.Bold, fontSize = 20.sp, color = PrimaryBlue, modifier = Modifier.padding(start = 12.dp)) },
+                        leadingIcon = { Text("₹", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = PrimaryBlue, modifier = Modifier.padding(start = 12.dp)) },
                         placeholder = { Text("0") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -582,43 +690,25 @@ fun NewEntryScreen(
                         shape = RoundedCornerShape(12.dp)
                     )
 
-                    // Notes / Tags Field
+                    // Full Descriptive Notes / Tags Field (Never Truncates)
                     OutlinedTextField(
                         value = notes,
                         onValueChange = { viewModel.notes.value = it },
                         modifier = Modifier.fillMaxWidth(),
                         label = { Text("Notes / Reason (विवरण)") },
+                        placeholder = { Text("Detailed note or remarks for this transaction") },
                         leadingIcon = { Icon(Icons.Default.Notes, contentDescription = null, tint = TextSecondary) },
-                        singleLine = true,
+                        minLines = 2,
+                        maxLines = 4,
                         shape = RoundedCornerShape(12.dp)
                     )
                 }
             }
 
-            // 3. Save Button
-            Button(
-                onClick = { viewModel.saveEntry() },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp),
-                shape = RoundedCornerShape(14.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (transactionType == TransactionType.GAVE) GaveRed else GotGreen
-                )
-            ) {
-                Icon(Icons.Default.Check, contentDescription = null)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "Save Entry to Ledger (सेव करें)",
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-
-            Spacer(modifier = Modifier.height(30.dp))
+            Spacer(modifier = Modifier.height(24.dp))
         }
 
-        // Live Speech-To-Text Dialog (Real-time on-screen transcription)
+        // Live Speech-To-Text Dialog (Real-time on-screen streaming)
         if (showLiveSpeechDialog) {
             LiveSpeechToTextDialog(
                 onDismiss = { showLiveSpeechDialog = false },
@@ -659,67 +749,77 @@ fun NewEntryScreen(
             }
         }
 
-        // Video Choice Dialog (Camera vs Gallery)
+        // Video Choice Dialog (Safe Camera vs Gallery)
         if (showVideoChoiceDialog) {
             AlertDialog(
                 onDismissRequest = { showVideoChoiceDialog = false },
                 title = { Text("Attach Video Note", fontWeight = FontWeight.Bold) },
                 text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("Record a short video or pick a video note from files:", fontSize = 13.sp, color = TextSecondary)
-                        Spacer(modifier = Modifier.height(4.dp))
 
-                        // Option 1: Camera
+                        // Option 1: Camera (With Camera Permission Check)
                         Card(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable {
                                     showVideoChoiceDialog = false
-                                    val mediaDir = File(context.filesDir, "media").apply { mkdirs() }
-                                    val file = File(mediaDir, "VID_${System.currentTimeMillis()}.mp4")
-                                    viewModel.mediaFile.value = file
-                                    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-                                    videoCaptureLauncher.launch(uri)
+                                    val hasCameraPerm = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+                                    if (hasCameraPerm) {
+                                        try {
+                                            val uri = prepareVideoUri()
+                                            videoCaptureLauncher.launch(uri)
+                                        } catch (e: Exception) {
+                                            Toast.makeText(context, "Cannot open camera: ${e.message}", Toast.LENGTH_SHORT).show()
+                                        }
+                                    } else {
+                                        cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                                    }
                                 },
-                            shape = RoundedCornerShape(10.dp),
-                            colors = CardDefaults.cardColors(containerColor = PrimaryBlue.copy(alpha = 0.08f))
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = PrimaryBlue.copy(alpha = 0.08f)),
+                            border = BorderStroke(1.dp, PrimaryBlue.copy(alpha = 0.2f))
                         ) {
                             Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.Default.PhotoCamera, contentDescription = null, tint = PrimaryBlue)
                                 Spacer(modifier = Modifier.width(12.dp))
                                 Column {
                                     Text("Record with Camera", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                                    Text("Open camera to record a video note", fontSize = 11.sp, color = TextSecondary)
+                                    Text("Record video note using camera", fontSize = 11.sp, color = TextSecondary)
                                 }
                             }
                         }
 
-                        // Option 2: Gallery / Files (Emulator-safe)
+                        // Option 2: Gallery / Files (Zero Crash Risk)
                         Card(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clickable {
                                     showVideoChoiceDialog = false
-                                    videoGalleryLauncher.launch("video/*")
+                                    try {
+                                        videoGalleryLauncher.launch("video/*")
+                                    } catch (e: Exception) {
+                                        Toast.makeText(context, "Cannot open file picker: ${e.message}", Toast.LENGTH_SHORT).show()
+                                    }
                                 },
-                            shape = RoundedCornerShape(10.dp),
-                            colors = CardDefaults.cardColors(containerColor = SecondaryTeal.copy(alpha = 0.08f))
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = SecondaryTeal.copy(alpha = 0.08f)),
+                            border = BorderStroke(1.dp, SecondaryTeal.copy(alpha = 0.2f))
                         ) {
                             Row(modifier = Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.Default.VideoLibrary, contentDescription = null, tint = SecondaryTeal)
                                 Spacer(modifier = Modifier.width(12.dp))
                                 Column {
                                     Text("Pick from Gallery / Files", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                                    Text("Select any video from storage", fontSize = 11.sp, color = TextSecondary)
+                                    Text("Select any video from device storage", fontSize = 11.sp, color = TextSecondary)
                                 }
                             }
                         }
                     }
                 },
-                confirmButton = {},
-                dismissButton = {
+                confirmButton = {
                     TextButton(onClick = { showVideoChoiceDialog = false }) {
-                        Text("Cancel")
+                        Text("Close")
                     }
                 }
             )

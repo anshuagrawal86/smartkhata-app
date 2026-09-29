@@ -2,9 +2,11 @@ package com.smartkhata.app.ui.components
 
 import android.content.Intent
 import android.widget.Toast
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -19,6 +21,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
@@ -45,14 +48,16 @@ fun TransactionItemCard(
     val currentPlayingPath by AudioPlayerHelper.currentlyPlayingPath.collectAsState()
     val isPlayingThis = currentPlayingPath != null && currentPlayingPath == entry.mediaPath
 
+    var isExpandedNote by remember { mutableStateOf(false) }
+
     val cardBg = if (isSelected) PrimaryBlue.copy(alpha = 0.08f) else SurfaceWhite
-    val cardBorder = if (isSelected) PrimaryBlue else Color.Transparent
+    val cardBorder = if (isSelected) PrimaryBlue else Color(0xFFE2E8F0)
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 5.dp)
-            .border(if (isSelected) 1.5.dp else 0.dp, cardBorder, RoundedCornerShape(14.dp))
+            .border(if (isSelected) 1.5.dp else 1.dp, cardBorder, RoundedCornerShape(14.dp))
             .combinedClickable(
                 onClick = {
                     if (isSelectionMode) {
@@ -74,7 +79,7 @@ fun TransactionItemCard(
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.Top
             ) {
                 // Selection Checkbox or Avatar
                 if (isSelectionMode) {
@@ -118,7 +123,7 @@ fun TransactionItemCard(
                     Spacer(modifier = Modifier.width(12.dp))
                 }
 
-                // Main Info
+                // Main Info Column
                 Column(modifier = Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
@@ -147,31 +152,50 @@ fun TransactionItemCard(
                         }
                     }
 
+                    // Complete Non-Truncated Note Display (Expandable)
                     val displayNote = if (entry.notes.isNotBlank()) entry.notes else entry.rawText
                     if (displayNote.isNotBlank()) {
-                        Text(
-                            text = displayNote,
-                            fontSize = 13.sp,
-                            color = TextSecondary,
-                            maxLines = 1
-                        )
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 3.dp)
+                                .clickable { isExpandedNote = !isExpandedNote }
+                        ) {
+                            Text(
+                                text = displayNote,
+                                fontSize = 13.sp,
+                                color = TextSecondary,
+                                lineHeight = 18.sp,
+                                maxLines = if (isExpandedNote) 12 else 3,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            if (displayNote.length > 70) {
+                                Text(
+                                    text = if (isExpandedNote) "Show less" else "Show more…",
+                                    fontSize = 11.sp,
+                                    color = PrimaryBlue,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.padding(top = 2.dp)
+                                )
+                            }
+                        }
                     }
 
-                    // Highly Visible, Prominent Date Row
+                    // Highly Visible Date Row
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(top = 3.dp)
+                        modifier = Modifier.padding(top = 4.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.CalendarToday,
                             contentDescription = null,
-                            modifier = Modifier.size(13.dp),
-                            tint = TextSecondary
+                            modifier = Modifier.size(12.dp),
+                            tint = Color.Gray
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
                             text = Formatters.formatDate(entry.entryDate),
-                            fontSize = 12.sp,
+                            fontSize = 11.sp,
                             fontWeight = FontWeight.Medium,
                             color = TextSecondary
                         )
@@ -201,7 +225,7 @@ fun TransactionItemCard(
 
                     if (!isSelectionMode) {
                         Row(
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(2.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.padding(top = 4.dp)
                         ) {
@@ -213,7 +237,7 @@ fun TransactionItemCard(
                                     imageVector = Icons.Default.Edit,
                                     contentDescription = "Edit entry",
                                     tint = SecondaryTeal,
-                                    modifier = Modifier.size(17.dp)
+                                    modifier = Modifier.size(16.dp)
                                 )
                             }
 
@@ -260,7 +284,7 @@ fun TransactionItemCard(
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = if (isPlayingThis) "Voice Note (Playing...)" else "Voice Note (${mediaFile.length() / 1024} KB)",
+                                    text = if (isPlayingThis) "Voice Note (Playing…)" else "Voice Note (${mediaFile.length() / 1024} KB)",
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Medium,
                                     color = SecondaryTeal

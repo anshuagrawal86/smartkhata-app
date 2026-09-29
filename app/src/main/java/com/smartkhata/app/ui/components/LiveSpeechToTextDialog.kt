@@ -59,7 +59,7 @@ fun LiveSpeechToTextDialog(
     // Speech Recognizer instance
     val recognizer = remember {
         SpeechRecognizerHelper(
-            context = context,
+            context = context.applicationContext,
             onReady = {
                 isListening = true
                 isError = false

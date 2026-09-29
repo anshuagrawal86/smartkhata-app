@@ -53,6 +53,7 @@ fun DashboardScreen(
     val selectedNet = selectedGave - selectedGot
 
     Scaffold(
+        contentWindowInsets = WindowInsets.safeDrawing,
         topBar = {
             TopAppBar(
                 title = {
@@ -134,6 +135,7 @@ fun DashboardScreen(
         floatingActionButton = {
             if (!isSelectionMode) {
                 Column(
+                    modifier = Modifier.navigationBarsPadding(),
                     horizontalAlignment = Alignment.End,
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {

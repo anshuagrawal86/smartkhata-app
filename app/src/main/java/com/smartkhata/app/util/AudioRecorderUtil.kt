@@ -19,24 +19,33 @@ class AudioRecorderUtil(private val context: Context) {
         val outputFile = File(mediaDir, "AUDIO_$timeStamp.m4a")
         currentOutputFile = outputFile
 
-        recorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            MediaRecorder(context)
-        } else {
-            @Suppress("DEPRECATION")
-            MediaRecorder()
-        }.apply {
-            setAudioSource(MediaRecorder.AudioSource.MIC)
-            setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-            setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-            setAudioEncodingBitRate(128000)
-            setAudioSamplingRate(44100)
-            setOutputFile(outputFile.absolutePath)
-            try {
-                prepare()
-                start()
-            } catch (e: Exception) {
-                Log.e("AudioRecorder", "Failed to start recording", e)
+        try {
+            stopRecording()
+
+            val mr = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                MediaRecorder(context)
+            } else {
+                @Suppress("DEPRECATION")
+                MediaRecorder()
             }
+
+            mr.setAudioSource(MediaRecorder.AudioSource.MIC)
+            mr.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+            mr.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+            mr.setAudioEncodingBitRate(128000)
+            mr.setAudioSamplingRate(44100)
+            mr.setOutputFile(outputFile.absolutePath)
+            mr.prepare()
+            mr.start()
+            recorder = mr
+        } catch (e: Exception) {
+            Log.e("AudioRecorder", "Failed to start recording: ${e.message}", e)
+            try {
+                recorder?.reset()
+                recorder?.release()
+            } catch (_: Exception) {}
+            recorder = null
+            throw e
         }
         return outputFile
     }
@@ -44,13 +53,15 @@ class AudioRecorderUtil(private val context: Context) {
     fun stopRecording(): File? {
         try {
             recorder?.stop()
-            recorder?.release()
         } catch (e: Exception) {
-            Log.e("AudioRecorder", "Failed to stop recording", e)
+            Log.w("AudioRecorder", "Warning stopping recorder: ${e.message}")
         } finally {
+            try {
+                recorder?.release()
+            } catch (_: Exception) {}
             recorder = null
         }
-        return currentOutputFile
+        return currentOutputFile?.takeIf { it.exists() && it.length() > 0 }
     }
 
     fun getAmplitude(): Int {

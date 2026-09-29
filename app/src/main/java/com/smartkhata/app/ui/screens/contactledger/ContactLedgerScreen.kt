@@ -73,6 +73,7 @@ fun ContactLedgerScreen(
     val partyName = contact?.name ?: "Contact"
 
     Scaffold(
+        contentWindowInsets = WindowInsets.safeDrawing,
         topBar = {
             TopAppBar(
                 title = {
@@ -179,6 +180,7 @@ fun ContactLedgerScreen(
             if (!isSelectionMode) {
                 FloatingActionButton(
                     onClick = { contact?.id?.let { onAddNewEntryForContact(it) } },
+                    modifier = Modifier.navigationBarsPadding(),
                     containerColor = PrimaryBlue,
                     contentColor = SurfaceWhite
                 ) {

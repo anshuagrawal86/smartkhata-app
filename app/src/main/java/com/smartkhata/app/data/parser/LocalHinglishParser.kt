@@ -219,18 +219,16 @@ object LocalHinglishParser {
     private fun extractNotes(text: String, person: String?, amount: Double): String {
         var clean = text
         if (person != null) {
-            clean = clean.replace(person, "", ignoreCase = true)
+            clean = clean.replace(Regex("""(?i)\b${Regex.escape(person)}\b"""), " ")
         }
         if (amount > 0) {
-            clean = clean.replace(amount.toInt().toString(), "")
-            clean = clean.replace(amount.toString(), "")
+            val intPart = amount.toInt().toString()
+            clean = clean.replace(Regex("""(?i)(?:rs\.?|inr|₹)?\s*$intPart(?:\.00?)?\s*(?:rs\.?|rupaye|rupay|rupees|/-)?"""), " ")
         }
-        clean = clean.replace(Regex("""(?i)(?:rs\.?|inr|₹|/-)"""), " ")
-
-        for (sw in STOP_WORDS) {
-            clean = clean.replace(Regex("""(?i)\b$sw\b"""), " ")
-        }
-        return clean.replace(Regex("""\s+"""), " ").trim()
+        clean = clean.replace(Regex("""(?i)\b(?:diye|diya|de diya|mila|mile|liya|le liya|paid|gave|got|received|udhar)\b"""), " ")
+        clean = clean.replace(Regex("""(?i)\b(?:ko|se|ne)\b"""), " ")
+        clean = clean.replace(Regex("""[\s,;]+"""), " ").trim()
+        return if (clean.isNotBlank()) clean.capitalizeFirst() else text.trim()
     }
 
     private fun isExcludedWord(word: String?): Boolean {

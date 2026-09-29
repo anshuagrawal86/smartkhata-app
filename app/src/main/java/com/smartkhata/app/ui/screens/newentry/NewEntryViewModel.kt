@@ -43,6 +43,7 @@ class NewEntryViewModel(
 
     val isRecordingAudio = MutableStateFlow(false)
     val recordingDurationSeconds = MutableStateFlow(0)
+    val audioAmplitudes = MutableStateFlow<List<Float>>(emptyList())
     val isPlayingAudio = MutableStateFlow(false)
     val isProcessingAI = MutableStateFlow(false)
     val saveSuccess = MutableStateFlow(false)
@@ -76,7 +77,8 @@ class NewEntryViewModel(
             if (parsed.type != TransactionType.NOTE) {
                 transactionType.value = parsed.type
             }
-            if (parsed.description.isNotBlank()) {
+            // Only set notes if empty, and preserve full context
+            if (notes.value.isBlank() && parsed.description.isNotBlank()) {
                 notes.value = parsed.description
             }
             if (parsed.dueDateEpochMs != null) {
@@ -122,15 +124,31 @@ class NewEntryViewModel(
             mediaType.value = MediaType.AUDIO
             isRecordingAudio.value = true
             recordingDurationSeconds.value = 0
+            audioAmplitudes.value = emptyList()
 
+            // Timer
             viewModelScope.launch {
                 while (isRecordingAudio.value) {
                     kotlinx.coroutines.delay(1000)
                     recordingDurationSeconds.value += 1
                 }
             }
+
+            // Real-time amplitude waveform polling
+            viewModelScope.launch {
+                while (isRecordingAudio.value) {
+                    kotlinx.coroutines.delay(60)
+                    val amp = audioRecorder.getAmplitude()
+                    val normalized = (amp.toFloat() / 32768f).coerceIn(0.05f, 1f)
+                    val current = audioAmplitudes.value.toMutableList()
+                    if (current.size >= 24) current.removeAt(0)
+                    current.add(normalized)
+                    audioAmplitudes.value = current
+                }
+            }
         } catch (e: Exception) {
-            errorMessage.value = "Failed to start audio recording: ${e.message}"
+            isRecordingAudio.value = false
+            errorMessage.value = "Microphone error: ${e.message}"
         }
     }
 
@@ -141,7 +159,7 @@ class NewEntryViewModel(
             mediaFile.value = file
             mediaType.value = MediaType.AUDIO
             if (notes.value.isBlank()) {
-                notes.value = "Voice note (${file.length() / 1024} KB)"
+                notes.value = if (inputText.value.isNotBlank()) inputText.value else "Voice note (${file.length() / 1024} KB)"
             }
             infoMessage.value = "Voice note attached successfully!"
             processAudioWithAI(file)
@@ -181,7 +199,7 @@ class NewEntryViewModel(
         mediaFile.value = file
         mediaType.value = MediaType.VIDEO
         if (notes.value.isBlank()) {
-            notes.value = "Video note (${file.length() / (1024 * 1024)} MB)"
+            notes.value = if (inputText.value.isNotBlank()) inputText.value else "Video note (${file.length() / (1024 * 1024)} MB)"
         }
         infoMessage.value = "Video note attached (${file.name})"
 
@@ -265,6 +283,16 @@ class NewEntryViewModel(
         // Allow saving as NOTE if no amount was given
         val resolvedType = if (amount <= 0.0) TransactionType.NOTE else transactionType.value
 
+        // CRITICAL: NEVER TRUNCATE USER NOTES
+        // Preserve the full text entered by the user
+        val finalNotes = when {
+            notes.value.isNotBlank() -> notes.value.trim()
+            inputText.value.isNotBlank() -> inputText.value.trim()
+            mediaType.value == MediaType.AUDIO -> "Voice note recording"
+            mediaType.value == MediaType.VIDEO -> "Video note attachment"
+            else -> ""
+        }
+
         viewModelScope.launch {
             try {
                 stopAudioPlayback()
@@ -272,12 +300,12 @@ class NewEntryViewModel(
                     contactName = name,
                     amount = amount,
                     type = resolvedType,
-                    rawText = inputText.value,
+                    rawText = inputText.value.trim(),
                     entryDate = entryDate.value,
                     dueDate = dueDate.value,
                     mediaType = mediaType.value,
                     mediaPath = mediaFile.value?.absolutePath,
-                    notes = if (notes.value.isNotBlank()) notes.value else if (mediaType.value != MediaType.TEXT) "${mediaType.value.name.lowercase().replaceFirstChar { it.uppercase() }} entry" else ""
+                    notes = finalNotes
                 )
                 saveSuccess.value = true
             } catch (e: Exception) {
